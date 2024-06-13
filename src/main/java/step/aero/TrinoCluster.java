@@ -61,7 +61,7 @@ public class TrinoCluster
 
         ImmutableMap tracingConfig = ImmutableMap.of(
                 "tracing.enabled", "true",
-                "tracing.exporter.endpoint", "https://otel-collector-opentelemetry-collector:14250");
+                "tracing.exporter.endpoint", "http://jaeger-collector:4317");
 
         trinoHelmRelease = new Release("trino-helm",
                 ReleaseArgs.builder()
@@ -89,7 +89,18 @@ public class TrinoCluster
                         .values(ImmutableMap.of(
                                 "query", ImmutableMap.of(
                                         "service", ImmutableMap.of("type", "LoadBalancer")),
-                                "fullnameOverride", "jaeger"))
+                                "fullnameOverride", "jaeger",
+                                "collector", ImmutableMap.of(
+                                        "service", ImmutableMap.of(
+                                                "grpc", ImmutableMap.of("port", "14250"),
+                                                "http", ImmutableMap.of("port", "14268"),
+                                                "otlp", ImmutableMap.of(
+                                                        "http", ImmutableMap.of(
+                                                                "name", "otlp-http",
+                                                                "port", "4318"),
+                                                        "grpc", ImmutableMap.of(
+                                                                "name", "otlp-grpc",
+                                                                "port", "4317"))))))
                         .repositoryOpts(
                                 RepositoryOptsArgs.builder()
                                         .repo("https://jaegertracing.github.io/helm-charts")
@@ -110,7 +121,7 @@ public class TrinoCluster
                                 .put("config", ImmutableMap.of(
                                         "exporters", ImmutableMap.of(
                                                 "otlp/jaeger", ImmutableMap.of(
-                                                        "endpoint", "http://jaeger-collector:14250")),
+                                                        "endpoint", "http://jaeger-collector:4317")),
                                         "processors", ImmutableMap.of(
                                                 "batch", ImmutableMap.of()),
                                         "receivers", ImmutableMap.of(
