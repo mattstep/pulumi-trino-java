@@ -49,10 +49,10 @@ import static com.pulumi.aws.iam.IamFunctions.getPolicyDocument;
 public class TrinoCluster
 {
     private static Workspace prometheusWorkspace;
-    private final Cluster eksCluster;
-    private final Release trinoHelmRelease;
-    private final Release otelCollector;
-    private final Release jeagerRelease;
+    private Cluster eksCluster;
+    private Release trinoHelmRelease;
+    private Release otelCollector;
+    private Release jeagerRelease;
 
     public TrinoCluster(Context context)
     {
@@ -274,7 +274,7 @@ public class TrinoCluster
                         .build());
 
         new PodIdentityAssociation("otel-collector", PodIdentityAssociationArgs.builder()
-                .clusterName(eksCluster.eksCluster().applyValue(com.pulumi.aws.eks.Cluster::clusterId).applyValue(String::valueOf))
+                .clusterName(eksCluster.eksCluster().applyValue(com.pulumi.aws.eks.Cluster::name).applyValue(String::valueOf))
                 .namespace("default")
                 .serviceAccount("otel-agent")
                 .roleArn(ampIngestRole.arn())
