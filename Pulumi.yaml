@@ -1,0 +1,4 @@
+name: pulumi-trino
+description: Example Trino Cluster with Pulumi
+runtime:
+  name: java
