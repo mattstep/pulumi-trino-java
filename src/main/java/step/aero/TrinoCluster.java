@@ -16,10 +16,22 @@ package step.aero;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.pulumi.Context;
+import com.pulumi.aws.amp.Workspace;
+import com.pulumi.aws.amp.WorkspaceArgs;
+import com.pulumi.aws.eks.PodIdentityAssociation;
+import com.pulumi.aws.eks.PodIdentityAssociationArgs;
+import com.pulumi.aws.iam.Role;
+import com.pulumi.aws.iam.RoleArgs;
+import com.pulumi.aws.iam.inputs.GetPolicyDocumentArgs;
+import com.pulumi.aws.iam.inputs.GetPolicyDocumentStatementArgs;
+import com.pulumi.aws.iam.inputs.GetPolicyDocumentStatementPrincipalArgs;
+import com.pulumi.aws.iam.inputs.RoleInlinePolicyArgs;
+import com.pulumi.aws.iam.outputs.GetPolicyDocumentResult;
 import com.pulumi.aws.ssm.SsmFunctions;
 import com.pulumi.aws.ssm.inputs.GetParameterArgs;
 import com.pulumi.aws.ssm.outputs.GetParameterResult;
 import com.pulumi.awsx.ec2.Vpc;
+import com.pulumi.core.Output;
 import com.pulumi.eks.Cluster;
 import com.pulumi.eks.ClusterArgs;
 import com.pulumi.kubernetes.Provider;
@@ -29,8 +41,14 @@ import com.pulumi.kubernetes.helm.v3.ReleaseArgs;
 import com.pulumi.kubernetes.helm.v3.inputs.RepositoryOptsArgs;
 import com.pulumi.resources.CustomResourceOptions;
 
+import java.util.List;
+import java.util.Map;
+
+import static com.pulumi.aws.iam.IamFunctions.getPolicyDocument;
+
 public class TrinoCluster
 {
+    private static Workspace prometheusWorkspace;
     private final Cluster eksCluster;
     private final Release trinoHelmRelease;
     private final Release otelCollector;
@@ -54,6 +72,13 @@ public class TrinoCluster
                         .maxSize(15)
                         .build());
 
+        prometheusWorkspace = new Workspace("trino", WorkspaceArgs.builder()
+                .alias("trino-metrics")
+                .tags(Map.of("Environment", "production"))
+                .build());
+
+        Role ampIngestRole = createAmpIngestRole();
+
         Provider kubernetesProvider = new Provider("trino-demo",
                 ProviderArgs.builder()
                         .kubeconfig(eksCluster.kubeconfigJson())
@@ -63,6 +88,12 @@ public class TrinoCluster
                 tracing.enabled=true
                 tracing.exporter.endpoint=http://jaeger-collector:4317""";
 
+        Map<String, String> prometheusAnnotations = ImmutableMap.of(
+                "prometheus.io/path", "metrics",
+                "prometheus.io/port", String.valueOf(8080),
+                "prometheus.io/scrape", "true");
+
+
         trinoHelmRelease = new Release("trino-helm",
                 ReleaseArgs.builder()
                         .chart("trino")
@@ -71,7 +102,11 @@ public class TrinoCluster
                                 "service", ImmutableMap.of("type", "LoadBalancer"),
                                 "server", ImmutableMap.of(
                                         "coordinatorExtraConfig", tracingConfig,
-                                        "workerExtraConfig", tracingConfig)))
+                                        "workerExtraConfig", tracingConfig),
+                                "coordinator", ImmutableMap.of(
+                                        "annotations", prometheusAnnotations),
+                                "worker", ImmutableMap.of(
+                                        "annotations", prometheusAnnotations)))
                         .repositoryOpts(
                                 RepositoryOptsArgs.builder()
                                         .repo("https://trinodb.github.io/charts")
@@ -117,13 +152,43 @@ public class TrinoCluster
                         .name("otel-collector")
                         .values(ImmutableMap.<String, Object>builder()
                                 .put("image", ImmutableMap.of("repository", "otel/opentelemetry-collector-contrib"))
-                                .put("mode", "deployment")
+                                .put("mode", "daemonset")
                                 .put("config", ImmutableMap.of(
                                         "exporters", ImmutableMap.of(
                                                 "otlp/jaeger", ImmutableMap.of(
-                                                        "endpoint", "http://jaeger-collector:4317")),
+                                                        "endpoint", "http://jaeger-collector:4317"),
+                                                "prometheusremotewrite", ImmutableMap.of(
+                                                        "endpoint", String.format("%sapi/v1/remote_write", prometheusWorkspace.prometheusEndpoint()),
+                                                        "auth", ImmutableMap.of("authenticator", "sigv4auth"),
+                                                        "resource_to_telemetry_conversion", ImmutableMap.of("enabled", "true"))),
+                                        "extensions", ImmutableMap.of(
+                                                "health_check", ImmutableMap.of(),
+                                                "memory_ballast", ImmutableMap.of(),
+                                                "sigv4auth", ImmutableMap.of(
+                                                        "assume_role", ImmutableMap.of(
+                                                                "arn", ampIngestRole.arn(),
+                                                                "sts_region", "us-east-1"))),
                                         "processors", ImmutableMap.of(
-                                                "batch", ImmutableMap.of()),
+                                                "batch", ImmutableMap.of(),
+                                                "memory_limiter", ImmutableMap.of(),
+                                                "k8sattributes/1", ImmutableMap.of(
+                                                        "auth_type", "serviceAccount",
+                                                        "passthrough", false,
+                                                        "filter", ImmutableMap.of(
+                                                                "node_from_env_var", "K8S_NODE_NAME"),
+                                                        "extract", ImmutableMap.of(
+                                                                "metadata", ImmutableList.of("k8s.pod.name", "k8s.pod.uid", "k8s.deployment.name", "k8s.namespace.name", "k8s.node.name", "k8s.pod.start_time"),
+                                                                "pod_association", ImmutableList.of(
+                                                                        ImmutableMap.of("sources", ImmutableList.of(
+                                                                                ImmutableMap.of(
+                                                                                        "from", "resource_attribute",
+                                                                                        "name", "k8s.pod.ip"))),
+                                                                        ImmutableMap.of("sources", ImmutableList.of(
+                                                                                ImmutableMap.of(
+                                                                                        "from", "resource_attribute",
+                                                                                        "name", "k8s.pod.uid"))),
+                                                                        ImmutableMap.of("sources", ImmutableList.of(
+                                                                                ImmutableMap.of("from", "connection"))))))),
                                         "receivers", ImmutableMap.of(
                                                 "otlp", ImmutableMap.of(
                                                         "protocols", ImmutableMap.of(
@@ -162,12 +227,45 @@ public class TrinoCluster
                                                 "telemetry", ImmutableMap.of(
                                                         "metrics", ImmutableMap.of(
                                                                 "address", "0.0.0.0:8888")),
-                                                "extensions", ImmutableList.of("health_check", "memory_ballast"),
+                                                "extensions", ImmutableList.of("health_check", "memory_ballast", "sigv4auth"),
                                                 "pipelines", ImmutableMap.of(
-                                                        "traces", ImmutableMap.of(
-                                                                "exporters", ImmutableList.of("otlp/jaeger"),
-                                                                "processors", ImmutableList.of("memory_limiter", "batch"),
-                                                                "receivers", ImmutableList.of("otlp"))))))
+                                                        "metrics", ImmutableMap.of(
+                                                                "exporters", ImmutableList.of("prometheusremotewrite", "otlp/jaeger"),
+                                                                "processors", ImmutableList.of(
+                                                                        "memory_limiter",
+                                                                        "k8sattributes/1",
+                                                                        "batch"),
+                                                                "receivers", ImmutableList.of("otlp", "prometheus"))))))
+                                .put("serviceAccount", ImmutableMap.of(
+                                        "create", true,
+                                        "name", "otel-agent"))
+                                .put("clusterRole", ImmutableMap.of(
+                                        "create", true,
+                                        "name", "otel-agent",
+                                        "rules", ImmutableList.of(
+                                                ImmutableMap.of(
+                                                        "apiGroups", ImmutableList.of(""),
+                                                        "resources", ImmutableList.of("nodes/stats"),
+                                                        "verbs", ImmutableList.of("get"))),
+                                        "clusterRoleBinding", ImmutableMap.of(
+                                                "name", "otel-agent")))
+                                .put("priorityClassName", "system-node-critical")
+                                .put("extraEnvs", ImmutableList.of(
+                                        ImmutableMap.of(
+                                                "name", "K8S_NODE_NAME",
+                                                "valueFrom", ImmutableMap.of(
+                                                        "fieldRef", ImmutableMap.of(
+                                                                "fieldPath", "spec.nodeName")))))
+                                .put("presets", ImmutableMap.of(
+                                        "kubernetesAttributes", ImmutableMap.of(
+                                                "enabled", true)))
+                                .put("resources", ImmutableMap.of(
+                                        "limits", ImmutableMap.of(
+                                                "cpu", "256m",
+                                                "memory", "512Mi")))
+                                .put("podLabels", ImmutableMap.of(
+                                        "app", "otel"))
+                                .buildOrThrow())
                                 .build())
                         .repositoryOpts(RepositoryOptsArgs.builder()
                                 .repo("https://open-telemetry.github.io/opentelemetry-helm-charts")
@@ -176,5 +274,50 @@ public class TrinoCluster
                 CustomResourceOptions.builder()
                         .provider(kubernetesProvider)
                         .build());
+
+        new PodIdentityAssociation("otel-collector", PodIdentityAssociationArgs.builder()
+                .clusterName(eksCluster.eksCluster().applyValue(com.pulumi.aws.eks.Cluster::clusterId).applyValue(String::valueOf))
+                .namespace("default")
+                .serviceAccount("otel-agent")
+                .roleArn(ampIngestRole.arn())
+                .build());
+    }
+
+    private static Output<GetPolicyDocumentResult> getAmpIngestPolicy()
+    {
+        return getPolicyDocument(GetPolicyDocumentArgs.builder()
+                .statements(GetPolicyDocumentStatementArgs.builder()
+                        .actions("aps:RemoteWrite")
+                        .effect("Allow")
+                        .resources(prometheusWorkspace.arn()
+                                .applyValue(arn -> arn)
+                                .applyValue(String::valueOf)
+                                .applyValue(List::of))
+                        .build())
+                .build());
+    }
+
+    private Role createAmpIngestRole()
+    {
+        Output<GetPolicyDocumentResult> instanceAssumeRolePolicy = getPolicyDocument(GetPolicyDocumentArgs.builder()
+                .statements(GetPolicyDocumentStatementArgs.builder()
+                        .actions("sts:AssumeRole", "sts:TagSession")
+                        .principals(GetPolicyDocumentStatementPrincipalArgs.builder()
+                                .type("Service")
+                                .identifiers("pods.eks.amazonaws.com")
+                                .build())
+                        .build())
+                .build());
+
+        Output<GetPolicyDocumentResult> ampIngestPolicy = getAmpIngestPolicy();
+
+        return new Role("amp-ingest", RoleArgs.builder()
+                .name("amp-ingest")
+                .assumeRolePolicy(instanceAssumeRolePolicy.applyValue(GetPolicyDocumentResult::json))
+                .inlinePolicies(RoleInlinePolicyArgs.builder()
+                        .name("AMPIngestPolicy")
+                        .policy(ampIngestPolicy.applyValue(GetPolicyDocumentResult::json))
+                        .build())
+                .build());
     }
 }
