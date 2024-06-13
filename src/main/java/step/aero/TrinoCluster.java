@@ -93,6 +93,7 @@ public class TrinoCluster
                 "prometheus.io/port", String.valueOf(8080),
                 "prometheus.io/scrape", "true");
 
+
         trinoHelmRelease = new Release("trino-helm",
                 ReleaseArgs.builder()
                         .chart("trino")
@@ -265,6 +266,10 @@ public class TrinoCluster
                                 .put("podLabels", ImmutableMap.of(
                                         "app", "otel"))
                                 .buildOrThrow())
+                                .build())
+                        .repositoryOpts(RepositoryOptsArgs.builder()
+                                .repo("https://open-telemetry.github.io/opentelemetry-helm-charts")
+                                .build())
                         .build(),
                 CustomResourceOptions.builder()
                         .provider(kubernetesProvider)
