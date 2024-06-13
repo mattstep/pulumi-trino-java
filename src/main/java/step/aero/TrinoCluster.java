@@ -59,9 +59,9 @@ public class TrinoCluster
                         .kubeconfig(eksCluster.kubeconfigJson())
                         .build());
 
-        ImmutableMap tracingConfig = ImmutableMap.of(
-                "tracing.enabled", "true",
-                "tracing.exporter.endpoint", "http://jaeger-collector:4317");
+        String tracingConfig = """
+                tracing.enabled=true
+                tracing.exporter.endpoint=http://jaeger-collector:4317""";
 
         trinoHelmRelease = new Release("trino-helm",
                 ReleaseArgs.builder()
@@ -70,8 +70,8 @@ public class TrinoCluster
                         .values(ImmutableMap.of(
                                 "service", ImmutableMap.of("type", "LoadBalancer"),
                                 "server", ImmutableMap.of(
-                                        "extraCooordinatorConfig", tracingConfig,
-                                        "extraWorkerConfig", tracingConfig)))
+                                        "coordinatorExtraConfig", tracingConfig,
+                                        "workerExtraConfig", tracingConfig)))
                         .repositoryOpts(
                                 RepositoryOptsArgs.builder()
                                         .repo("https://trinodb.github.io/charts")
