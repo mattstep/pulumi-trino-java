@@ -265,6 +265,9 @@ public class TrinoCluster
                                 .put("podLabels", ImmutableMap.of(
                                         "app", "otel"))
                                 .buildOrThrow())
+                        .repositoryOpts(RepositoryOptsArgs.builder()
+                                .repo("https://open-telemetry.github.io/opentelemetry-helm-charts")
+                                .build())
                         .build(),
                 CustomResourceOptions.builder()
                         .provider(kubernetesProvider)
