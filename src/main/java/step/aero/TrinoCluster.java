@@ -59,11 +59,19 @@ public class TrinoCluster
                         .kubeconfig(eksCluster.kubeconfigJson())
                         .build());
 
+        ImmutableMap tracingConfig = ImmutableMap.of(
+                "tracing.enabled", "true",
+                "tracing.exporter.endpoint", "https://otel-collector-opentelemetry-collector:14250");
+
         trinoHelmRelease = new Release("trino-helm",
                 ReleaseArgs.builder()
                         .chart("trino")
                         .version("0.23.1")
-                        .values(ImmutableMap.of("service", ImmutableMap.of("type", "LoadBalancer")))
+                        .values(ImmutableMap.of(
+                                "service", ImmutableMap.of("type", "LoadBalancer"),
+                                "server", ImmutableMap.of(
+                                        "extraCooordinatorConfig", tracingConfig,
+                                        "extraWorkerConfig", tracingConfig)))
                         .repositoryOpts(
                                 RepositoryOptsArgs.builder()
                                         .repo("https://trinodb.github.io/charts")
@@ -76,10 +84,12 @@ public class TrinoCluster
         jeagerRelease = new Release("jaeger",
                 ReleaseArgs.builder()
                         .chart("jaeger")
+                        .name("jaeger")
                         .version("3.0.10")
                         .values(ImmutableMap.of(
                                 "query", ImmutableMap.of(
-                                        "service", ImmutableMap.of("type", "LoadBalancer"))))
+                                        "service", ImmutableMap.of("type", "LoadBalancer")),
+                                "fullnameOverride", "jaeger"))
                         .repositoryOpts(
                                 RepositoryOptsArgs.builder()
                                         .repo("https://jaegertracing.github.io/helm-charts")
@@ -93,57 +103,60 @@ public class TrinoCluster
                 ReleaseArgs.builder()
                         .chart("opentelemetry-collector")
                         .version("0.86.0")
+                        .name("otel-collector")
                         .values(ImmutableMap.<String, Object>builder()
                                 .put("image", ImmutableMap.of("repository", "otel/opentelemetry-collector-contrib"))
                                 .put("mode", "deployment")
                                 .put("config", ImmutableMap.of(
-                                        "exporters", ImmutableMap.of(),
+                                        "exporters", ImmutableMap.of(
+                                                "otlp/jaeger", ImmutableMap.of(
+                                                        "endpoint", "http://jaeger-collector:14250")),
                                         "processors", ImmutableMap.of(
-                                                "batch", ImmutableMap.of(),
-                                                "receivers", ImmutableMap.of(
-                                                        "otlp", ImmutableMap.of(
-                                                                "protocols", ImmutableMap.of(
-                                                                        "grpc", ImmutableMap.of(
-                                                                                "endpoint", "0.0.0.0:4317"))),
-                                                        "prometheus", ImmutableMap.of(
-                                                                "config", ImmutableMap.of(
-                                                                        "scrape_configs", ImmutableList.of(
-                                                                                ImmutableMap.of(
-                                                                                        "job_name", "k8s",
-                                                                                        "scrape_interval", "15s",
-                                                                                        "kubernetes_sd_configs", ImmutableList.of(
-                                                                                                ImmutableMap.of("role", "pod")),
-                                                                                        "relabel_configs", ImmutableList.of(
-                                                                                                ImmutableMap.of(
-                                                                                                        "source_labels", ImmutableList.of("__meta_kubernetes_pod_node_name"),
-                                                                                                        "regex", "${K8S_NODE_NAME}",
-                                                                                                        "action", "keep"),
-                                                                                                ImmutableMap.of(
-                                                                                                        "source_labels", ImmutableList.of("__meta_kubernetes_pod_annotation_prometheus_io_scrape"),
-                                                                                                        "regex", true,
-                                                                                                        "action", "keep"),
-                                                                                                ImmutableMap.of(
-                                                                                                        "source_labels", ImmutableList.of("__meta_kubernetes_pod_annotation_prometheus_io_path"),
-                                                                                                        "target_label", "__metrics_path__",
-                                                                                                        "regex", "$(.+)",
-                                                                                                        "action", "replace"),
-                                                                                                ImmutableMap.of(
-                                                                                                        "source_labels", ImmutableList.of(
-                                                                                                                "__meta_kubernetes_pod_ip",
-                                                                                                                "__meta_kubernetes_pod_annotation_prometheus_io_port"),
-                                                                                                        "target_label", "__address__",
-                                                                                                        "separator", ":",
-                                                                                                        "action", "replace"))))))),
-                                                "service", ImmutableMap.of(
-                                                        "telemetry", ImmutableMap.of(
-                                                                "metrics", ImmutableMap.of(
-                                                                        "address", "0.0.0.0:8888")),
-                                                        "extensions", ImmutableList.of("health_check", "memory_ballast"),
-                                                        "pipelines", ImmutableMap.of(
-                                                                "metrics", ImmutableMap.of(
-                                                                        "exporters", ImmutableList.of("datadog", "datadog/cardinal"),
-                                                                        "processors", ImmutableList.of("memory_limiter", "batch"),
-                                                                        "receivers", ImmutableList.of("otlp")))))))
+                                                "batch", ImmutableMap.of()),
+                                        "receivers", ImmutableMap.of(
+                                                "otlp", ImmutableMap.of(
+                                                        "protocols", ImmutableMap.of(
+                                                                "grpc", ImmutableMap.of(
+                                                                        "endpoint", "0.0.0.0:4317"))),
+                                                "prometheus", ImmutableMap.of(
+                                                        "config", ImmutableMap.of(
+                                                                "scrape_configs", ImmutableList.of(
+                                                                        ImmutableMap.of(
+                                                                                "job_name", "k8s",
+                                                                                "scrape_interval", "15s",
+                                                                                "kubernetes_sd_configs", ImmutableList.of(
+                                                                                        ImmutableMap.of("role", "pod")),
+                                                                                "relabel_configs", ImmutableList.of(
+                                                                                        ImmutableMap.of(
+                                                                                                "source_labels", ImmutableList.of("__meta_kubernetes_pod_node_name"),
+                                                                                                "regex", "${K8S_NODE_NAME}",
+                                                                                                "action", "keep"),
+                                                                                        ImmutableMap.of(
+                                                                                                "source_labels", ImmutableList.of("__meta_kubernetes_pod_annotation_prometheus_io_scrape"),
+                                                                                                "regex", true,
+                                                                                                "action", "keep"),
+                                                                                        ImmutableMap.of(
+                                                                                                "source_labels", ImmutableList.of("__meta_kubernetes_pod_annotation_prometheus_io_path"),
+                                                                                                "target_label", "__metrics_path__",
+                                                                                                "regex", "$(.+)",
+                                                                                                "action", "replace"),
+                                                                                        ImmutableMap.of(
+                                                                                                "source_labels", ImmutableList.of(
+                                                                                                        "__meta_kubernetes_pod_ip",
+                                                                                                        "__meta_kubernetes_pod_annotation_prometheus_io_port"),
+                                                                                                "target_label", "__address__",
+                                                                                                "separator", ":",
+                                                                                                "action", "replace"))))))),
+                                        "service", ImmutableMap.of(
+                                                "telemetry", ImmutableMap.of(
+                                                        "metrics", ImmutableMap.of(
+                                                                "address", "0.0.0.0:8888")),
+                                                "extensions", ImmutableList.of("health_check", "memory_ballast"),
+                                                "pipelines", ImmutableMap.of(
+                                                        "traces", ImmutableMap.of(
+                                                                "exporters", ImmutableList.of("otlp/jaeger"),
+                                                                "processors", ImmutableList.of("memory_limiter", "batch"),
+                                                                "receivers", ImmutableList.of("otlp"))))))
                                 .build())
                         .repositoryOpts(RepositoryOptsArgs.builder()
                                 .repo("https://open-telemetry.github.io/opentelemetry-helm-charts")
