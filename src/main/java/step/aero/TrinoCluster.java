@@ -16,9 +16,6 @@ package step.aero;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.pulumi.Context;
-import com.pulumi.aws.ssm.SsmFunctions;
-import com.pulumi.aws.ssm.inputs.GetParameterArgs;
-import com.pulumi.aws.ssm.outputs.GetParameterResult;
 import com.pulumi.awsx.ec2.Vpc;
 import com.pulumi.eks.Cluster;
 import com.pulumi.eks.ClusterArgs;
@@ -46,9 +43,6 @@ public class TrinoCluster
                         .publicSubnetIds(vpc.publicSubnetIds())
                         .privateSubnetIds(vpc.privateSubnetIds())
                         .instanceType("t4g.xlarge")
-                        .nodeAmiId(SsmFunctions.getParameter(GetParameterArgs.builder()
-                                .name("/aws/service/eks/optimized-ami/1.29/amazon-linux-2-arm64/recommended/image_id")
-                                .build()).applyValue(GetParameterResult::value))
                         .minSize(5)
                         .desiredCapacity(5)
                         .maxSize(15)

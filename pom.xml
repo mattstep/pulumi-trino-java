@@ -15,7 +15,7 @@
     <properties>
         <air.check.skip-spotbugs>true</air.check.skip-spotbugs>
         <air.check.skip-pmd>true</air.check.skip-pmd>
-        <air.java.version>21.0.1</air.java.version>
+        <air.java.version>24.0.1</air.java.version>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
         <project.build.targetJdk>21</project.build.targetJdk>
         <air.maven.version>3.9.3</air.maven.version>
