@@ -45,7 +45,7 @@ public class TrinoCluster
                         .instanceType("t4g.xlarge")
                         .minSize(5)
                         .desiredCapacity(5)
-                        .maxSize(15)
+                        .maxSize(10)
                         .build());
 
         Provider kubernetesProvider = new Provider("trino-demo",
